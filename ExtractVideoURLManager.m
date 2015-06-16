@@ -168,7 +168,7 @@ static NSString* const ytDummySignature = @"BC46474764CD5E86EBFECD43C5692A50528C
     NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     
     NSRegularExpression *reg = [NSRegularExpression regularExpressionWithPattern:regPtn
-                                                                         options:NSRegularExpressionCaseInsensitive
+                                                                         options:0
                                                                            error:NULL];
     NSTextCheckingResult *result = [reg firstMatchInString:str
                                                    options:(NSMatchingOptions)0
