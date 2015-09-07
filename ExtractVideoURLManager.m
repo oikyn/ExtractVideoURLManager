@@ -1,3 +1,11 @@
+//
+//  ExtractVideoURLManager.m
+//  DM
+//
+//  Created by oikawa on 2015/05/20.
+//  Copyright (c) 2015年 Nagisa-inc. All rights reserved.
+//
+
 #import "ExtractVideoURLManager.h"
 
 #import <JavaScriptCore/JavaScriptCore.h>
@@ -53,7 +61,7 @@ static NSString* const ytDummySignature = @"BC46474764CD5E86EBFECD43C5692A50528C
         
         //PlayerJS URL
         NSString *playerJS_URLString = [weakSelf nullToString:[infoObj valueForKeyPath:@"config.assets.js"]];
-        playerJS_URLString = [NSString stringWithFormat:@"http:%@", playerJS_URLString];
+        playerJS_URLString = [NSString stringWithFormat:@"https:%@", playerJS_URLString];
         
         //Fetching
         [weakSelf fetchSource:[NSURL URLWithString:playerJS_URLString] responseHandler:^(NSData *data2, NSError *error2){
@@ -168,7 +176,7 @@ static NSString* const ytDummySignature = @"BC46474764CD5E86EBFECD43C5692A50528C
     NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     
     NSRegularExpression *reg = [NSRegularExpression regularExpressionWithPattern:regPtn
-                                                                         options:0
+                                                                         options:NSRegularExpressionCaseInsensitive
                                                                            error:NULL];
     NSTextCheckingResult *result = [reg firstMatchInString:str
                                                    options:(NSMatchingOptions)0
@@ -185,17 +193,20 @@ static NSString* const ytDummySignature = @"BC46474764CD5E86EBFECD43C5692A50528C
     
     NSString *regStr = [NSString stringWithFormat:regPtn, funcName];
     NSRegularExpression *reg = [NSRegularExpression regularExpressionWithPattern:regStr
-                                                                         options:NSRegularExpressionCaseInsensitive
+                                                                         options:0
                                                                            error:NULL];
     NSTextCheckingResult *result = [reg firstMatchInString:str
                                                    options:(NSMatchingOptions)0
                                                      range:NSMakeRange(0, str.length)];
+    
     NSString *funcStr = (result.numberOfRanges > 1) ? [str substringWithRange:[result rangeAtIndex:0]] : nil;
     return funcStr;
 }
 
 // 復号化する関数を有効にする
 - (NSString *)yt_ValidateDecryptionFunc:(NSData *)data funcName:(NSString *)funcName {
+    NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    
     [_jsContext evaluateScript:[NSString stringWithFormat:@"%@('%@')", funcName, ytDummySignature]];
     
     NSString *exception = [[_jsContext exception] toString];
@@ -209,11 +220,26 @@ static NSString* const ytDummySignature = @"BC46474764CD5E86EBFECD43C5692A50528C
     NSRegularExpression *reg = [NSRegularExpression regularExpressionWithPattern:regStr
                                                                          options:NSRegularExpressionCaseInsensitive
                                                                            error:NULL];
+    NSString *varStr = [self matchTextInString:str reg:reg];
     
-    NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    // 変数名にエスケープが必要な文字列が含まれている場合がある
+    if (varStr == nil) {
+        NSString *regPtn = @"var \\%@\\s*=\\s*\\{(.*)\\};";
+        NSString *regStr = [NSString stringWithFormat:regPtn, funcName2];
+        NSRegularExpression *reg = [NSRegularExpression regularExpressionWithPattern:regStr
+                                                                             options:NSRegularExpressionCaseInsensitive
+                                                                               error:NULL];
+        varStr = [self matchTextInString:str reg:reg];
+    }
+    
+    return varStr;
+}
+
+- (NSString *)matchTextInString:(NSString *)str reg:(NSRegularExpression *)reg {
     NSTextCheckingResult *result = [reg firstMatchInString:str
                                                    options:(NSMatchingOptions)0
                                                      range:NSMakeRange(0, str.length)];
+    
     NSString *varStr = (result.numberOfRanges > 1) ? [str substringWithRange:[result rangeAtIndex:0]] : nil;
     return varStr;
 }
@@ -229,7 +255,8 @@ static NSString* const ytDummySignature = @"BC46474764CD5E86EBFECD43C5692A50528C
     for (NSString *stream in stream_map_ary) {
         NSString *itag = @"";
         NSMutableDictionary *dic = [NSMutableDictionary dictionary];
-        for (NSString *q in [stream componentsSeparatedByString:@"&"]) {
+        NSArray *stream2 = [stream componentsSeparatedByString:@"&"];
+        for (NSString *q in stream2) {
             NSArray *q_ary = [q componentsSeparatedByString:@"="];
             
             if ([q_ary[0] isEqualToString:@"itag"]) {
@@ -258,22 +285,26 @@ static NSString* const ytDummySignature = @"BC46474764CD5E86EBFECD43C5692A50528C
 
 // 動画情報を取得
 - (id)dm_ExtractInfo:(NSData *)data {
-    NSString *regPtn = @"var info\\s*=\\s*\\{(.*)\\}";
+//    NSString *regPtn = @"var info\\s*=\\s*\\{(.*)\\}";
+    NSString *regPtn = @"document.getElementById\\('player'\\)\\s*,\\s*(.*)\\);";
     
     NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     
+    NSError *error;
     NSRegularExpression *reg = [NSRegularExpression regularExpressionWithPattern:regPtn
                                                                          options:NSRegularExpressionCaseInsensitive
-                                                                           error:NULL];
+                                                                           error:&error];
+    
     NSTextCheckingResult *result = [reg firstMatchInString:str
                                                    options:(NSMatchingOptions)0
                                                      range:NSMakeRange(0, str.length)];
-    NSString *infoObjStr = (result.numberOfRanges > 1) ? [str substringWithRange:[result rangeAtIndex:0]] : nil;
+
+    NSString *infoObjStr = (result.numberOfRanges >= 1) ? [str substringWithRange:[result rangeAtIndex:1]] : nil;
     if (!infoObjStr) {
         return nil;
     }
-    
-    [_jsContext evaluateScript:infoObjStr];
+
+    [_jsContext evaluateScript:[NSString stringWithFormat:@"var info = %@", infoObjStr]];
     JSValue *infoObjValue = _jsContext[@"info"];
     id infoObj = [infoObjValue toObject];
     
@@ -282,15 +313,10 @@ static NSString* const ytDummySignature = @"BC46474764CD5E86EBFECD43C5692A50528C
 
 // URLを作成する
 - (NSDictionary *)dm_CreateURLs:(id)infoObj {
-    NSMutableDictionary *urls = [NSMutableDictionary dictionary];
-    urls[@"stream_h264_hd1080_url"] = [self nullToString:[infoObj objectForKey:@"stream_h264_hd1080_url"]];
-    urls[@"stream_h264_hd_url"] = [self nullToString:[infoObj objectForKey:@"stream_h264_hd_url"]];
-    urls[@"stream_h264_hq_url"] = [self nullToString:[infoObj objectForKey:@"stream_h264_hq_url"]];
-    urls[@"stream_h264_ld_url"] = [self nullToString:[infoObj objectForKey:@"stream_h264_ld_url"]];
-    urls[@"stream_h264_url"] = [self nullToString:[infoObj objectForKey:@"stream_h264_url"]];
-    urls[@"stream_hls_url"] = [self nullToString:[infoObj objectForKey:@"stream_hls_url"]];
+    NSDictionary *metadata = infoObj[@"metadata"];
+    NSDictionary *qualities = metadata[@"qualities"];
     
-    return [NSDictionary dictionaryWithDictionary:urls];
+    return qualities;
 }
 
 /////////////////////////////////////////////
@@ -314,3 +340,6 @@ static NSString* const ytDummySignature = @"BC46474764CD5E86EBFECD43C5692A50528C
 - (NSString *)nullToString:(NSString *)data {
     return (![data isEqual:[NSNull null]] ? data : @"");
 }
+
+@end
+
